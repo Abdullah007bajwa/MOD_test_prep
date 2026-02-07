@@ -1,0 +1,59 @@
+# Role: Senior Full-Stack Engineer (Cursor Specialist)
+# Project: "PrepMaster AI" - Exam Simulator
+
+## 1. Directives
+- **Code Style:** Concise, runnable Python 3.12+. Prefer modularity over monolithic files.
+- **State Management:** Implement "Zero-Trust State." Use `st.session_state` for real-time interaction and sync to Supabase every 5 questions to handle Streamlit's frequent re-renders.
+- **Persistence:** All user progress, weighted stats, and session history must reside in Supabase. Assume Render storage is ephemeral.
+- **Tone:** Technical, direct, and human-like. Skip boilerplate commentary.
+
+## 2. Core Exam Logic (Hard Constraints)
+- **Exam Composition:** Exactly 100 MCQs. 70% GAT/General (`category='gat'`), 30% Subject/AI (`category='subject'`).
+- **Scoring Engine:** - Correct: +1.0
+    - Incorrect: -0.25
+    - Skipped: 0.0
+- **Timing:** 120-minute global countdown. Auto-submit when `time_remaining <= 0`.
+- **Weighted Randomization:** - Formula: `Priority = (fail_count * 2) + (days_since_last_practiced)`.
+    - Algorithm: Use weighted sampling to ensure "weak" questions appear 3x more often than "mastered" ones.
+
+## 3. Database Schema (Postgres/Supabase)
+- **questions**: `id (uuid)`, `category (text)`, `sub_category (text)`, `text (text)`, `options (jsonb)`, `correct_answer_idx (int)`, `explanation (text)`.
+- **user_stats**: `question_id (fk)`, `fail_count (int)`, `success_count (int)`, `last_practiced_at (timestamp)`.
+- **sessions**: `id (uuid)`, `start_time (timestamp)`, `total_score (float)`, `category_breakdown (jsonb)`.
+
+## 4. File-Specific Guidelines
+- **app.py**: Multi-page layout (Dashboard, Mock Test, Drill Mode). Use `st.sidebar` for navigation.
+- **engine.py**: Pure logic for scoring, weighting, and 70/30 distribution. No UI code here.
+- **db.py**: All Supabase CRUD operations. Use `st.cache_resource` for the Supabase client.
+- **importer.py**: Handle `.jsonl` ingestion. Map `topic` to `sub_category` and use UPSERT to prevent duplicates.
+
+## 5. Deployment (Render)
+- Use `render.yaml` for Blueprint deployment.
+- Environment Variables: `SUPABASE_URL`, `SUPABASE_KEY`.
+- Build Command: `pip install -r requirements.txt`.
+## Scraping & Data Extraction Rules
+- Tooling: Use `json` for HAR parsing and `BeautifulSoup4` for HTML extraction.
+- Data Source: Extract exclusively from `response -> content -> text` in the provided .har file.
+- Logic:
+    - Map URLs containing `/logical-reasoning/` to `primary_tag: gat`.
+    - Map the slug (e.g., `number-series`) to `sub_tag`.
+    - Detect MCQ patterns: Question text, list of options (A, B, C, D), and hidden explanation divs.
+- Cleaning: Strip all HTML tags from question text and explanations. Convert "Option A" etc., to integer indices (0-3).
+## PakMCQs Scraping Logic
+- Answer Detection: Look for the `<strong>` tag containing the text "Correct Answer:". The text following this (e.g., 'A', 'B') is the correct index.
+- Primary Tagging: All data from PakMCQs is `primary_tag: gat`.
+- Sub-Tagging: Map categories to `current_affairs` or `general_knowledge`.
+## Sanfoundry Scraping Rules
+- Content Area: Target only the `div.entry-content` element.
+- Stop Condition: Stop parsing when you encounter "To practice all aptitude questions" or "Recommended Articles".
+- Answer Detection: The correct option and explanation are stored in a `div` with the class `collapseanswer`.
+- Text Cleaning: Remove "View Answer" text and specific January 2026/advertisement placeholders.
+## Subject-Related Scraping Rules (CS/AI)
+- Primary Tagging: Set `primary_tag: subject` for all Sanfoundry CS links.
+- Sub-Tag Mapping: 
+    - /data-structure-questions-answers/ -> `data_structures`
+    - /object-oriented-programming-oops-questions-answers/ -> `oops`
+    - /operating-system-questions-answers/ -> `os`
+    - /computer-network-questions-answers/ -> `networking`
+    - /opencv-questions-answers/ -> `ai_opencv`
+- Answer Key: Extract the letter after "Answer: " and map to index (a=0, b=1, c=2, d=3).
