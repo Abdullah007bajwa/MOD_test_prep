@@ -11,7 +11,8 @@ PrepMaster AI is a comprehensive exam preparation platform featuring weighted le
 - Weighted question selection based on performance history
 
 ### ?? Drill Mode (NEW)
-- **Practice by Category & Subcategory**: Select specific topics to focus on
+- **Practice by Category**: Practice all questions from GAT or Subject category
+- **Practice by Subcategory**: Select specific topics to focus on
 - **Immediate Feedback**: See correct/incorrect status instantly
 - **Explanations**: Detailed explanations shown after each answer
 - **Progress Tracking**: Visual progress indicator
@@ -107,12 +108,21 @@ MOD/
 
 ### Selecting a Practice Session
 
+**Option 1: Practice by Category**
 1. Navigate to **Drill Mode** in the sidebar
-2. Select **Category** (GAT or Subject)
-3. Choose a **Subcategory** from the dropdown
+2. Select **Practice Mode**: "By Category"
+3. Select **Category** (GAT or Subject)
+4. (Optional) Check "Limit number of questions" and set maximum
+5. Click **Start Category Practice Session**
+
+**Option 2: Practice by Subcategory**
+1. Navigate to **Drill Mode** in the sidebar
+2. Select **Practice Mode**: "By Subcategory"
+3. Select **Category** (GAT or Subject)
+4. Choose a **Subcategory** from the dropdown
    - Question counts are shown for each subcategory
    - ?? Low-count warnings appear for subcategories with <20 questions
-4. Click **Start Practice Session**
+5. Click **Start Practice Session**
 
 ### During Practice
 

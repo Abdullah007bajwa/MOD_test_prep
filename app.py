@@ -1,7 +1,15 @@
 """PrepMaster AI — multi-page exam simulator."""
 import random
-import streamlit as st
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta
+
+# Ensure project root is in path
+project_root = Path(__file__).resolve().parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+import streamlit as st
 
 from db import get_question_counts, get_questions_by_category, get_questions_by_subcategory, get_subcategory_counts, get_subcategories_by_category
 from engine import EXAM_TOTAL, GAT_RATIO, SUBJECT_RATIO, CORRECT_SCORE, INCORRECT_SCORE, SKIPPED_SCORE, EXAM_DURATION_MINUTES
@@ -158,7 +166,7 @@ elif page == "Mock Test":
 # ----- Drill Mode -----
 elif page == "Drill Mode":
     st.header("Drill Mode")
-    st.caption("Practice by category and subcategory with immediate feedback and explanations")
+    st.caption("Practice by category or subcategory with immediate feedback and explanations")
     
     # Initialize drill mode session state
     if "drill_category" not in st.session_state:
@@ -181,6 +189,8 @@ elif page == "Drill Mode":
         questions = st.session_state["drill_questions"]
         answers = st.session_state["drill_answers"]
         current_idx = st.session_state["drill_current_idx"]
+        category = st.session_state.get("drill_category", "unknown")
+        subcategory = st.session_state.get("drill_subcategory")
         
         if current_idx >= len(questions):
             st.success("You've completed all questions in this practice session!")
@@ -205,10 +215,16 @@ elif page == "Drill Mode":
         is_answered = user_answer is not None
         is_correct = is_answered and user_answer == correct_idx
         
+        # Show practice mode info
+        if subcategory:
+            practice_info = f"Practicing: {category.upper()} → {format_subcategory_name(subcategory)}"
+        else:
+            practice_info = f"Practicing: {category.upper()} (All Questions)"
+        
         # Progress indicator
         answered_count = len(answers)
         st.progress((current_idx + 1) / len(questions))
-        st.caption(f"Question {current_idx + 1} of {len(questions)} | {answered_count} answered")
+        st.caption(f"{practice_info} | Question {current_idx + 1} of {len(questions)} | {answered_count} answered")
         
         # Question display
         st.subheader("Question")
@@ -286,97 +302,59 @@ elif page == "Drill Mode":
     
     # Practice session setup UI
     try:
+        # Practice mode selection
+        practice_mode = st.radio(
+            "Practice Mode",
+            ["By Category", "By Subcategory"],
+            horizontal=True,
+            key="drill_practice_mode"
+        )
+        
         # Category selection
         category = st.radio("Select Category", ["gat", "subject"], horizontal=True, key="drill_category_selector")
         st.session_state["drill_category"] = category
         
-        # Get subcategories for selected category
+        # Get total count for category
         try:
-            subcategories = get_subcategories_by_category(category)
+            category_counts = get_question_counts()
+            category_total = category_counts.get(category, 0)
         except Exception as e:
-            st.error(f"Error loading subcategories: {e}")
-            st.stop()
+            st.warning(f"Could not load category count: {e}")
+            category_total = 0
         
-        if not subcategories:
-            st.warning(f"No subcategories found for {category}. Please ensure questions are loaded in the database.")
-            st.stop()
-        
-        # Get counts for all subcategories
-        try:
-            subcategory_counts = get_subcategory_counts(category)
-            low_count_subs = get_low_count_subcategories(threshold=20, category=category)
-        except Exception as e:
-            st.warning(f"Could not load subcategory counts: {e}")
-            subcategory_counts = {}
-            low_count_subs = {}
-        
-        # Create subcategory options with counts and warnings
-        subcategory_options = []
-        for sub in sorted(subcategories):
-            count = subcategory_counts.get(sub, 0)
-            is_low = sub in low_count_subs
-            if is_low:
-                display_name = f"{format_subcategory_name(sub)} ({count} questions) ⚠️ Low count"
-            else:
-                display_name = f"{format_subcategory_name(sub)} ({count} questions)"
-            subcategory_options.append((sub, display_name, count, is_low))
-        
-        # Subcategory selection
-        if subcategory_options:
-            selected_display = st.selectbox(
-                "Select Subcategory",
-                options=[opt[0] for opt in subcategory_options],
-                format_func=lambda x: next(opt[1] for opt in subcategory_options if opt[0] == x),
-                key="drill_subcategory_selector"
-            )
-            st.session_state["drill_subcategory"] = selected_display
-            
-            # Show selected subcategory info
-            selected_info = next(opt for opt in subcategory_options if opt[0] == selected_display)
-            selected_count = selected_info[2]
-            is_low_count = selected_info[3]
+        # Practice by Category
+        if practice_mode == "By Category":
+            st.divider()
+            st.subheader(f"Practice All {category.upper()} Questions")
             
             col1, col2 = st.columns(2)
             with col1:
-                st.metric("Available Questions", selected_count)
+                st.metric("Total Questions Available", category_total)
             with col2:
-                if is_low_count:
-                    st.warning(f"⚠️ This subcategory has fewer than 20 questions")
+                st.info(f"Practice all questions from {category.upper()} category")
             
-            # MCQ Discovery for low-count subcategories
-            if is_low_count:
-                st.divider()
-                st.subheader("Find More MCQs Online")
-                st.info(f"Looking for more {format_subcategory_name(selected_display)} questions online...")
+            if category_total > 0:
+                # Option to limit questions
+                limit_questions = st.checkbox("Limit number of questions", key="limit_category_questions")
+                max_questions = 100
+                if limit_questions:
+                    max_questions = st.number_input(
+                        "Maximum questions to practice",
+                        min_value=10,
+                        max_value=min(1000, category_total),
+                        value=min(100, category_total),
+                        step=10,
+                        key="category_max_questions"
+                    )
                 
-                sources = get_sources_for_subcategory(selected_display)
-                if sources:
-                    st.write("**Recommended Sources:**")
-                    for source in sources:
-                        with st.expander(f"🔗 {source['name']} - {source.get('notes', '')}"):
-                            st.write(f"**URL:** [{source['url']}]({source['url']})")
-                            if source.get('notes'):
-                                st.caption(f"Note: {source['notes']}")
-                else:
-                    st.write("**Search online for:**")
-                    search_terms = [
-                        f"{format_subcategory_name(selected_display)} MCQs",
-                        f"{format_subcategory_name(selected_display)} practice questions",
-                        f"{format_subcategory_name(selected_display)} multiple choice questions"
-                    ]
-                    for term in search_terms:
-                        st.write(f"- {term}")
-            
-            # Start practice button
-            if selected_count > 0:
-                if st.button("Start Practice Session", type="primary", use_container_width=True):
+                if st.button("Start Category Practice Session", type="primary", use_container_width=True):
                     try:
-                        # Fetch questions for selected subcategory
-                        result = get_questions_by_subcategory(category, selected_display, limit=100)
+                        # Fetch questions for selected category
+                        result = get_questions_by_category(category, limit=max_questions)
                         questions_list = result.data if hasattr(result, 'data') else result
                         
                         if not questions_list:
-                            st.error(f"No questions found for {format_subcategory_name(selected_display)}")
+                            st.error(f"No questions found for {category}")
                         else:
                             # Shuffle questions for variety
                             random.shuffle(questions_list)
@@ -384,13 +362,119 @@ elif page == "Drill Mode":
                             st.session_state["drill_current_idx"] = 0
                             st.session_state["drill_answers"] = {}
                             st.session_state["drill_started"] = True
+                            st.session_state["drill_subcategory"] = None  # Clear subcategory for category practice
                             st.rerun()
                     except Exception as e:
                         st.error(f"Failed to load questions: {e}")
             else:
-                st.error("No questions available for this subcategory. Please check the database.")
+                st.error(f"No questions available for {category}. Please check the database.")
+        
+        # Practice by Subcategory
         else:
-            st.warning("No subcategories available. Please ensure questions are loaded in the database.")
+            st.divider()
+            st.subheader("Practice by Subcategory")
+            
+            # Get subcategories for selected category
+            try:
+                subcategories = get_subcategories_by_category(category)
+            except Exception as e:
+                st.error(f"Error loading subcategories: {e}")
+                st.stop()
+            
+            if not subcategories:
+                st.warning(f"No subcategories found for {category}. Please ensure questions are loaded in the database.")
+                st.stop()
+            
+            # Get counts for all subcategories
+            try:
+                subcategory_counts = get_subcategory_counts(category)
+                low_count_subs = get_low_count_subcategories(threshold=20, category=category)
+            except Exception as e:
+                st.warning(f"Could not load subcategory counts: {e}")
+                subcategory_counts = {}
+                low_count_subs = {}
+            
+            # Create subcategory options with counts and warnings
+            subcategory_options = []
+            for sub in sorted(subcategories):
+                count = subcategory_counts.get(sub, 0)
+                is_low = sub in low_count_subs
+                if is_low:
+                    display_name = f"{format_subcategory_name(sub)} ({count} questions) ⚠️ Low count"
+                else:
+                    display_name = f"{format_subcategory_name(sub)} ({count} questions)"
+                subcategory_options.append((sub, display_name, count, is_low))
+            
+            # Subcategory selection
+            if subcategory_options:
+                selected_display = st.selectbox(
+                    "Select Subcategory",
+                    options=[opt[0] for opt in subcategory_options],
+                    format_func=lambda x: next(opt[1] for opt in subcategory_options if opt[0] == x),
+                    key="drill_subcategory_selector"
+                )
+                st.session_state["drill_subcategory"] = selected_display
+                
+                # Show selected subcategory info
+                selected_info = next(opt for opt in subcategory_options if opt[0] == selected_display)
+                selected_count = selected_info[2]
+                is_low_count = selected_info[3]
+                
+                col1, col2 = st.columns(2)
+                with col1:
+                    st.metric("Available Questions", selected_count)
+                with col2:
+                    if is_low_count:
+                        st.warning(f"⚠️ This subcategory has fewer than 20 questions")
+                
+                # MCQ Discovery for low-count subcategories
+                if is_low_count:
+                    st.divider()
+                    st.subheader("Find More MCQs Online")
+                    st.info(f"Looking for more {format_subcategory_name(selected_display)} questions online...")
+                    
+                    sources = get_sources_for_subcategory(selected_display)
+                    if sources:
+                        st.write("**Recommended Sources:**")
+                        for source in sources:
+                            with st.expander(f"🔗 {source['name']} - {source.get('notes', '')}"):
+                                st.write(f"**URL:** [{source['url']}]({source['url']})")
+                                if source.get('notes'):
+                                    st.caption(f"Note: {source['notes']}")
+                    else:
+                        st.write("**Search online for:**")
+                        search_terms = [
+                            f"{format_subcategory_name(selected_display)} MCQs",
+                            f"{format_subcategory_name(selected_display)} practice questions",
+                            f"{format_subcategory_name(selected_display)} multiple choice questions"
+                        ]
+                        for term in search_terms:
+                            st.write(f"- {term}")
+                
+                # Start practice button
+                if selected_count > 0:
+                    if st.button("Start Practice Session", type="primary", use_container_width=True):
+                        try:
+                            # Fetch questions for selected subcategory
+                            result = get_questions_by_subcategory(category, selected_display, limit=100)
+                            questions_list = result.data if hasattr(result, 'data') else result
+                            
+                            if not questions_list:
+                                st.error(f"No questions found for {format_subcategory_name(selected_display)}")
+                            else:
+                                # Shuffle questions for variety
+                                random.shuffle(questions_list)
+                                st.session_state["drill_questions"] = questions_list
+                                st.session_state["drill_current_idx"] = 0
+                                st.session_state["drill_answers"] = {}
+                                st.session_state["drill_started"] = True
+                                st.rerun()
+                        except Exception as e:
+                            st.error(f"Failed to load questions: {e}")
+                else:
+                    st.error("No questions available for this subcategory. Please check the database.")
+            else:
+                st.warning("No subcategories available. Please ensure questions are loaded in the database.")
     
     except Exception as e:
         st.error(f"Error loading drill mode: {e}")
