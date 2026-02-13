@@ -76,6 +76,89 @@ class DatabaseClient:
             logger.error(f"Error fetching random questions: {e}")
             return []
     
+    def get_questions_by_subcategory(self, category: str, sub_category: str, limit: int = 100) -> List[Dict]:
+        """Fetch questions filtered by category and sub_category."""
+        try:
+            response = (
+                self.client.table("questions")
+                .select("*")
+                .eq("category", category)
+                .eq("sub_category", sub_category)
+                .limit(limit)
+                .execute()
+            )
+            return response.data if response.data else []
+        except Exception as e:
+            logger.error(f"Error fetching questions by subcategory {category}/{sub_category}: {e}")
+            return []
+    
+    def get_subcategory_counts(self, category: str | None = None) -> Dict[str, int]:
+        """
+        Get count of questions per subcategory.
+        
+        Args:
+            category: Optional category filter (gat/subject). If None, returns counts for all categories.
+        
+        Returns:
+            Dict mapping sub_category -> count
+        """
+        try:
+            # Fetch all questions with category and sub_category
+            all_rows = []
+            page_size = 1000
+            offset = 0
+            while True:
+                query = self.client.table("questions").select("category", "sub_category")
+                if category:
+                    query = query.eq("category", category)
+                response = query.range(offset, offset + page_size - 1).execute()
+                data = response.data or []
+                if not data:
+                    break
+                all_rows.extend(data)
+                if len(data) < page_size:
+                    break
+                offset += page_size
+            
+            # Count by sub_category
+            from collections import Counter
+            sub_cats = [row.get("sub_category") or "(blank)" for row in all_rows]
+            counts = dict(Counter(sub_cats))
+            return counts
+        except Exception as e:
+            logger.error(f"Error getting subcategory counts: {e}")
+            return {}
+    
+    def get_subcategories_by_category(self, category: str) -> List[str]:
+        """Get list of unique subcategories for a given category."""
+        try:
+            # Fetch distinct sub_categories
+            all_rows = []
+            page_size = 1000
+            offset = 0
+            while True:
+                response = (
+                    self.client.table("questions")
+                    .select("sub_category")
+                    .eq("category", category)
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+                data = response.data or []
+                if not data:
+                    break
+                all_rows.extend(data)
+                if len(data) < page_size:
+                    break
+                offset += page_size
+            
+            # Get unique subcategories
+            subcategories = sorted(set(row.get("sub_category") or "" for row in all_rows if row.get("sub_category")))
+            return [s for s in subcategories if s]  # Filter out empty strings
+        except Exception as e:
+            logger.error(f"Error getting subcategories: {e}")
+            return []
+    
     def upsert_question(self, question: Dict) -> bool:
         """Upsert a single question (insert or update if exists)."""
         try:

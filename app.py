@@ -3,8 +3,9 @@ import random
 import streamlit as st
 from datetime import datetime, timedelta
 
-from db import get_question_counts, get_questions_by_category
+from db import get_question_counts, get_questions_by_category, get_questions_by_subcategory, get_subcategory_counts, get_subcategories_by_category
 from engine import EXAM_TOTAL, GAT_RATIO, SUBJECT_RATIO, CORRECT_SCORE, INCORRECT_SCORE, SKIPPED_SCORE, EXAM_DURATION_MINUTES
+from src.mcq_discovery import get_low_count_subcategories, get_sources_for_subcategory, format_subcategory_name
 
 st.set_page_config(page_title="PrepMaster AI", layout="wide")
 st.sidebar.title("PrepMaster AI")
@@ -157,4 +158,240 @@ elif page == "Mock Test":
 # ----- Drill Mode -----
 elif page == "Drill Mode":
     st.header("Drill Mode")
-    st.info("Weighted practice by weak areas. (Coming soon: uses user_stats for priority.)")
+    st.caption("Practice by category and subcategory with immediate feedback and explanations")
+    
+    # Initialize drill mode session state
+    if "drill_category" not in st.session_state:
+        st.session_state["drill_category"] = None
+    if "drill_subcategory" not in st.session_state:
+        st.session_state["drill_subcategory"] = None
+    if "drill_questions" not in st.session_state:
+        st.session_state["drill_questions"] = []
+    if "drill_current_idx" not in st.session_state:
+        st.session_state["drill_current_idx"] = 0
+    if "drill_answers" not in st.session_state:
+        st.session_state["drill_answers"] = {}  # {question_id: selected_idx}
+    if "drill_started" not in st.session_state:
+        st.session_state["drill_started"] = False
+    if "drill_show_discovery" not in st.session_state:
+        st.session_state["drill_show_discovery"] = False
+    
+    # If practice session is active, show practice interface
+    if st.session_state["drill_started"] and st.session_state["drill_questions"]:
+        questions = st.session_state["drill_questions"]
+        answers = st.session_state["drill_answers"]
+        current_idx = st.session_state["drill_current_idx"]
+        
+        if current_idx >= len(questions):
+            st.success("You've completed all questions in this practice session!")
+            if st.button("Start New Practice Session"):
+                st.session_state["drill_started"] = False
+                st.session_state["drill_questions"] = []
+                st.session_state["drill_current_idx"] = 0
+                st.session_state["drill_answers"] = {}
+                st.rerun()
+            st.stop()
+        
+        q = questions[current_idx]
+        q_id = q.get("id")
+        options = q.get("options") or []
+        correct_idx = q.get("correct_answer_idx", 0)
+        explanation = q.get("explanation", "")
+        option_labels = "ABCDEFGHIJ"
+        n_opts = min(len(options), 10)
+        
+        # Check if user has answered this question
+        user_answer = answers.get(q_id)
+        is_answered = user_answer is not None
+        is_correct = is_answered and user_answer == correct_idx
+        
+        # Progress indicator
+        answered_count = len(answers)
+        st.progress((current_idx + 1) / len(questions))
+        st.caption(f"Question {current_idx + 1} of {len(questions)} | {answered_count} answered")
+        
+        # Question display
+        st.subheader("Question")
+        st.write(q.get("text", ""))
+        
+        # Options display
+        st.subheader("Options")
+        
+        if not is_answered:
+            # Show radio buttons for selection
+            option_display = [f"{option_labels[i]}. {(options[i] or '')}" for i in range(n_opts) if options[i]]
+            selected_option = st.radio(
+                "Choose your answer:",
+                options=list(range(len(option_display))),
+                format_func=lambda i: option_display[i] if i < len(option_display) else "",
+                key=f"radio_{q_id}"
+            )
+            
+            if st.button("Submit Answer", type="primary"):
+                st.session_state["drill_answers"][q_id] = selected_option
+                st.rerun()
+        else:
+            # Show results with color coding
+            for i in range(n_opts):
+                option_text = options[i] or ""
+                if not option_text:
+                    continue
+                
+                label = f"{option_labels[i]}. {option_text}"
+                
+                # Determine display style
+                if i == correct_idx:
+                    # Correct answer - highlight in green
+                    st.success(f"✓ {label} (Correct Answer)")
+                elif i == user_answer and not is_correct:
+                    # User's incorrect answer - highlight in red
+                    st.error(f"✗ {label} (Your Answer - Incorrect)")
+                else:
+                    # Other options
+                    st.write(f"○ {label}")
+        
+        # Feedback and explanation (shown after answer)
+        if is_answered:
+            st.divider()
+            if is_correct:
+                st.success("✓ Correct! Well done.")
+            else:
+                st.error(f"✗ Incorrect. The correct answer is {option_labels[correct_idx]}.")
+            
+            if explanation:
+                st.subheader("Explanation")
+                st.info(explanation)
+            else:
+                st.info("No explanation available for this question.")
+        
+        # Navigation buttons
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            if st.button("← Previous", disabled=current_idx == 0):
+                st.session_state["drill_current_idx"] = current_idx - 1
+                st.rerun()
+        with col2:
+            if st.button("Next →", disabled=current_idx >= len(questions) - 1):
+                st.session_state["drill_current_idx"] = current_idx + 1
+                st.rerun()
+        with col3:
+            if st.button("End Practice Session"):
+                st.session_state["drill_started"] = False
+                st.session_state["drill_questions"] = []
+                st.session_state["drill_current_idx"] = 0
+                st.session_state["drill_answers"] = {}
+                st.rerun()
+        
+        st.stop()
+    
+    # Practice session setup UI
+    try:
+        # Category selection
+        category = st.radio("Select Category", ["gat", "subject"], horizontal=True, key="drill_category_selector")
+        st.session_state["drill_category"] = category
+        
+        # Get subcategories for selected category
+        try:
+            subcategories = get_subcategories_by_category(category)
+        except Exception as e:
+            st.error(f"Error loading subcategories: {e}")
+            st.stop()
+        
+        if not subcategories:
+            st.warning(f"No subcategories found for {category}. Please ensure questions are loaded in the database.")
+            st.stop()
+        
+        # Get counts for all subcategories
+        try:
+            subcategory_counts = get_subcategory_counts(category)
+            low_count_subs = get_low_count_subcategories(threshold=20, category=category)
+        except Exception as e:
+            st.warning(f"Could not load subcategory counts: {e}")
+            subcategory_counts = {}
+            low_count_subs = {}
+        
+        # Create subcategory options with counts and warnings
+        subcategory_options = []
+        for sub in sorted(subcategories):
+            count = subcategory_counts.get(sub, 0)
+            is_low = sub in low_count_subs
+            if is_low:
+                display_name = f"{format_subcategory_name(sub)} ({count} questions) ⚠️ Low count"
+            else:
+                display_name = f"{format_subcategory_name(sub)} ({count} questions)"
+            subcategory_options.append((sub, display_name, count, is_low))
+        
+        # Subcategory selection
+        if subcategory_options:
+            selected_display = st.selectbox(
+                "Select Subcategory",
+                options=[opt[0] for opt in subcategory_options],
+                format_func=lambda x: next(opt[1] for opt in subcategory_options if opt[0] == x),
+                key="drill_subcategory_selector"
+            )
+            st.session_state["drill_subcategory"] = selected_display
+            
+            # Show selected subcategory info
+            selected_info = next(opt for opt in subcategory_options if opt[0] == selected_display)
+            selected_count = selected_info[2]
+            is_low_count = selected_info[3]
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Available Questions", selected_count)
+            with col2:
+                if is_low_count:
+                    st.warning(f"⚠️ This subcategory has fewer than 20 questions")
+            
+            # MCQ Discovery for low-count subcategories
+            if is_low_count:
+                st.divider()
+                st.subheader("Find More MCQs Online")
+                st.info(f"Looking for more {format_subcategory_name(selected_display)} questions online...")
+                
+                sources = get_sources_for_subcategory(selected_display)
+                if sources:
+                    st.write("**Recommended Sources:**")
+                    for source in sources:
+                        with st.expander(f"🔗 {source['name']} - {source.get('notes', '')}"):
+                            st.write(f"**URL:** [{source['url']}]({source['url']})")
+                            if source.get('notes'):
+                                st.caption(f"Note: {source['notes']}")
+                else:
+                    st.write("**Search online for:**")
+                    search_terms = [
+                        f"{format_subcategory_name(selected_display)} MCQs",
+                        f"{format_subcategory_name(selected_display)} practice questions",
+                        f"{format_subcategory_name(selected_display)} multiple choice questions"
+                    ]
+                    for term in search_terms:
+                        st.write(f"- {term}")
+            
+            # Start practice button
+            if selected_count > 0:
+                if st.button("Start Practice Session", type="primary", use_container_width=True):
+                    try:
+                        # Fetch questions for selected subcategory
+                        result = get_questions_by_subcategory(category, selected_display, limit=100)
+                        questions_list = result.data if hasattr(result, 'data') else result
+                        
+                        if not questions_list:
+                            st.error(f"No questions found for {format_subcategory_name(selected_display)}")
+                        else:
+                            # Shuffle questions for variety
+                            random.shuffle(questions_list)
+                            st.session_state["drill_questions"] = questions_list
+                            st.session_state["drill_current_idx"] = 0
+                            st.session_state["drill_answers"] = {}
+                            st.session_state["drill_started"] = True
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to load questions: {e}")
+            else:
+                st.error("No questions available for this subcategory. Please check the database.")
+        else:
+            st.warning("No subcategories available. Please ensure questions are loaded in the database.")
+    
+    except Exception as e:
+        st.error(f"Error loading drill mode: {e}")
+        st.exception(e)

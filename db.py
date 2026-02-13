@@ -75,6 +75,79 @@ def get_questions_by_category(category: str, limit: int | None = None):
     return q.execute()
 
 
+def get_questions_by_subcategory(category: str, sub_category: str, limit: int | None = None):
+    """Get questions filtered by both category and sub_category."""
+    q = get_supabase().table("questions").select("*").eq("category", category).eq("sub_category", sub_category)
+    if limit:
+        q = q.limit(limit)
+    return q.execute()
+
+
+def get_subcategory_counts(category: str | None = None):
+    """Returns dict of {sub_category: count} for given category, or all categories if None."""
+    client = get_supabase()
+    counts = {}
+    
+    try:
+        # Fetch all questions with category and sub_category
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            query = client.table("questions").select("category", "sub_category")
+            if category:
+                query = query.eq("category", category)
+            r = query.range(offset, offset + page_size - 1).execute()
+            data = r.data or []
+            if not data:
+                break
+            all_rows.extend(data)
+            if len(data) < page_size:
+                break
+            offset += page_size
+        
+        # Count by sub_category
+        from collections import Counter
+        sub_cats = [row.get("sub_category") or "(blank)" for row in all_rows]
+        counts = dict(Counter(sub_cats))
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error getting subcategory counts: {e}")
+    
+    return counts
+
+
+def get_subcategories_by_category(category: str):
+    """Returns list of unique subcategories for given category."""
+    client = get_supabase()
+    try:
+        # Fetch distinct sub_categories
+        all_rows = []
+        page_size = 1000
+        offset = 0
+        while True:
+            r = (
+                client.table("questions")
+                .select("sub_category")
+                .eq("category", category)
+                .range(offset, offset + page_size - 1)
+                .execute()
+            )
+            data = r.data or []
+            if not data:
+                break
+            all_rows.extend(data)
+            if len(data) < page_size:
+                break
+            offset += page_size
+        
+        # Get unique subcategories
+        subcategories = sorted(set(row.get("sub_category") or "" for row in all_rows if row.get("sub_category")))
+        return [s for s in subcategories if s]  # Filter out empty strings
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Error getting subcategories: {e}")
+        return []
+
+
 def get_question_counts():
     """Returns dict with total, gat, subject counts (for dashboard)."""
     client = get_supabase()
